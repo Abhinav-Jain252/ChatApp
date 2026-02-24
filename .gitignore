@@ -1,0 +1,21 @@
+# Dependency directories
+node_modules/
+
+# Environment variables (Sensitive Info!)
+.env
+*.env
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Security: Private Keys
+keys/
+*.pem
+*.key
+*.pub
