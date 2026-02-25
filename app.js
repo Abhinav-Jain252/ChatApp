@@ -1,56 +1,135 @@
-const readLine = require("readline-sync");
+const net = require("net");
 const fs = require("fs");
-const { encrypt, decrypt } = require("./crypt");
+const readline = require("readline");
+const {
+  verifyCertificate,
+  getPublicKeyFromCert,
+  asymmetricEncrypt,
+  asymmetricDecrypt,
+  encryptMessage,
+  decryptMessage,
+} = require("./crypt");
 
-function startApp() {
-  console.log("---E2EE CLI Messenger---");
-  const options = [
-    "Encrypt & Save Message",
-    "Read & Decrypt the Message",
-    "Exit",
-  ];
-  const index = readLine.keyInSelect(options, "What would you like to do? ");
+// Configuration
+const ROOT_CA = fs.readFileSync("./keys/rootCA.pem");
+const PORT = 5000;
 
-  switch (index) {
-    case 0:
-      handleEncryption();
-      break;
-    case 1:
-      handleDecryption();
-      break;
-    default:
-      process.exit();
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+
+let sessionKey = null;
+
+// Role Selection
+
+rl.question("Start as (s)erver or (c)lient? ", (choice) => {
+  if (choice.toLowerCase() === "s") {
+    startServer();
+  } else {
+    startClient();
   }
+});
+
+// Server Side (User B)
+function startServer() {
+  const myCert = fs.readFileSync("./keys/userB.pem");
+  const myKey = fs.readFileSync("./keys/userB.key");
+
+  const server = net.createServer((socket) => {
+    console.log("\n[!] Client Connected. Initializing Handshake...");
+
+    // 1. Send our certificate to the client
+    socket.write(JSON.stringify({ type: "CERT", data: myCert.toString() }));
+
+    socket.on("data", (data) => {
+      try {
+        const packet = JSON.parse(data);
+
+        // 2. Receive the encrypted session key from client
+        if (packet.type === "SESSION_KEY") {
+          const encryptedKey = Buffer.from(packet.data, "base64");
+          sessionKey = asymmetricDecrypt(myKey, encryptedKey);
+          console.log("[SUCCESS] Session Key Established Securely");
+          setupChat(socket);
+        }
+
+        // 3. Receive encrypted messages
+        else if (packet.type === "MSG") {
+          const decrypted = decryptMessage(packet.data, sessionKey);
+          console.log(`\nPeer: ${decrypted}`);
+          process.stdout.write("You: ");
+        }
+      } catch (err) {
+        console.log("[ERROR]", err.message);
+      }
+    });
+  });
+
+  server.listen(PORT, () => console.log(`Server listening on PORT ${5000}...`));
 }
 
-function handleEncryption() {
-  const message = readLine.question("Enter message to encrypt: ");
-  try {
-    const encrypted = encrypt(message);
-    fs.writeFileSync("vault.json", JSON.stringify(encrypted, null, 2));
-    console.log("\n[SUCCESS] Message encrypted and saved to vault.json");
-  } catch (err) {
-    console.error("\n[ERROR] Encryption failed:", err.message);
-  }
-  startApp();
+// Client Side (User A)
+function startClient() {
+  const socket = net.createConnection({ port: PORT }, () => {
+    console.log("\n[!] Connected to Server");
+  });
+
+  socket.on("data", (data) => {
+    try {
+      const packet = JSON.parse(data);
+
+      // 1. Receive Server Certificate
+      if (packet.type === "CERT") {
+        console.log("[!] Verifying Server Certificate...");
+
+        if (verifyCertificate(packet.data, ROOT_CA)) {
+          console.log("[SUCCESS] Server identity verified via Root CA");
+
+          // 2. Generate Session Key
+          sessionKey = require("crypto").randomBytes(32);
+
+          // 3. Encrypt session key with server's public key
+          const serverPubKey = getPublicKeyFromCert(packet.data);
+          const encryptedKey = asymmetricEncrypt(serverPubKey, sessionKey);
+
+          socket.write(
+            JSON.stringify({
+              type: "SESSION_KEY",
+              data: encryptedKey.toString("base64"),
+            }),
+          );
+
+          setupChat(socket);
+        } else {
+          console.log("[FAILURE] Invalid Certification. Closing Connection");
+          socket.destroy();
+        }
+      }
+
+      // Receive encrypted message
+      else if (packet.type === "MSG") {
+        const decrypted = decryptMessage(packet.data, sessionKey);
+        console.log(`\nPeer: ${decrypted}`);
+        process.stdout.write("You: ");
+      }
+    } catch (err) {
+      console.error("[ERROR]", err.message);
+    }
+  });
 }
 
-function handleDecryption() {
-  if (!fs.existsSync("vault.json")) {
-    console.log("\n[!] No vault.json found. Encrypt a message first.\n");
-    return startApp();
-  }
+// Chat Interface
+function setupChat(socket) {
+  console.log("-------Secure Chat Started-------");
+  rl.setPrompt("You: ");
+  rl.prompt();
 
-  try {
-    const rawData = fs.readFileSync("vault.json");
-    const encryptedPayLoad = JSON.parse(rawData);
-    const decryptedMessage = decrypt(encryptedPayLoad);
-    
-    console.log(`\n[DECRYPTED]: ${decryptedMessage}\n`);
-    fs.unlinkSync('./vault.json');
-  } catch (err) {
-    console.error("\n[ERROR] Decryption Failed", err.message);
-  }
+  rl.on("line", (line) => {
+    if (sessionKey) {
+      const encrypted = encryptMessage(line, sessionKey);
+      socket.write(JSON.stringify({ type: "MSG", data: encrypted }));
+    }
+    rl.prompt();
+  });
 }
-
-startApp();

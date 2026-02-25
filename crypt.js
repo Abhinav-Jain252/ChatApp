@@ -4,65 +4,80 @@ const fs = require("fs");
 const Module = require("module");
 const path = require("path");
 
-// Reads .env paths
+// IDENTITY & TRUST FUNCTIONS
+// Verify that a certificate (UserA.pem) was signed by your Root CA (rootCA.pem)
+const verifyCertificate = (certPEM, rootCAPrem) => {
+  try {
+    const cert = new crypto.X509Certificate(certPEM);
+    const root = new crypto.X509Certificate(rootCAPrem);
 
-const PRIVATE_KEY_PATH = path.join(__dirname, process.env.PRIVATEKEYPATH || './keys/myCA.key');
-const PUBLIC_KEY_PATH = path.join(__dirname, process.env.PUBLIC_KEY_PATH || './keys/myCA.pem');
+    // check if certificate is currently valid (date-wise)
+    const now = new Date();
+    if (now < new Date(cert.validFrom) || now > new Date(cert.validTo)) {
+      return false;
+    }
 
-const privateKey = fs.readFileSync(PRIVATE_KEY_PATH, "utf-8");
-const publicKey = fs.readFileSync(PUBLIC_KEY_PATH, "utf-8");
+    // Verify signature using Root CA's public key
+    return cert.verify(root.publicKey);
+  } catch (err) {
+    console.error("Verification Error", err.message);
+    return false;
+  }
+};
 
-/**
- * Encrypt Function:
- *  1. Generate random AES-256 Key and IV
- *  2. Encrypt text with AES-GCM
- *  3. Encrypt AES Key with RSA public key
- */
-const encrypt = (plaintext) => {
-  const aesKey = crypto.randomBytes(32);
-  const iv = crypto.randomBytes(16);
+const getPublicKeyFromCert = (certPEM) => {
+  const cert = new crypto.X509Certificate(certPEM);
+  return cert.publicKey;
+};
 
-  const cipher = crypto.createCipheriv("aes-256-gcm", aesKey, iv);
-  let cipherText = cipher.update(plaintext, "utf-8", "hex");
-  cipherText += cipher.final("hex");
-  const authTag = cipher.getAuthTag().toString("hex");
+// Key Exchange (Asymmetric) used to encrypt the small "Secret Session Key" so only the owner of the private key can read it
 
-  const encryptedAESKey = crypto.publicEncrypt(
+const asymmetricEncrypt = (publicKey, dataBuffer) => {
+  return crypto.publicEncrypt(
     {
       key: publicKey,
       padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
       oaepHash: "sha256",
     },
-    aesKey,
+    dataBuffer,
   );
+};
+
+const asymmetricDecrypt = (privateKeyPEM, encryptedBuffer) => {
+  return crypto.privateDecrypt(
+    {
+      key: privateKeyPEM,
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
+    },
+    encryptedBuffer,
+  );
+};
+
+// Chat Encryption (Symmetric AES 256 GCM)
+// Used for the actual chat message once the secret key is established
+
+const encryptMessage = (plaintext, sessionKey) => {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv("aes-256-gcm", sessionKey, iv);
+
+  let cipherText = cipher.update(plaintext, "utf-8", "hex");
+  cipherText += cipher.final("hex");
+  const authTag = cipher.getAuthTag().toString("hex");
 
   return {
     cipherText,
     iv: iv.toString("hex"),
     authTag,
-    encryptedAESKey: encryptedAESKey.toString("base64"),
   };
 };
 
-/**
- * Decrypt Function:
- *  1. Decrypts AES key using RSA Private Key
- *  2. Uses recovered AES key to decrypt the ciphertext
- */
-const decrypt = (payload) => {
-  const { cipherText, iv, authTag, encryptedAESKey } = payload;
-  const decryptedAESKey = crypto.privateDecrypt(
-    {
-      key: privateKey,
-      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-      oaepHash: "sha256",
-    },
-    Buffer.from(encryptedAESKey, "base64"),
-  );
+const decryptMessage = (payload, sessionKey) => {
+  const { cipherText, iv, authTag } = payload;
 
   const decipher = crypto.createDecipheriv(
     "aes-256-gcm",
-    decryptedAESKey,
+    sessionKey,
     Buffer.from(iv, "hex"),
   );
 
@@ -74,4 +89,11 @@ const decrypt = (payload) => {
   return decrypted;
 };
 
-module.exports = { encrypt, decrypt };
+module.exports = {
+  verifyCertificate,
+  getPublicKeyFromCert,
+  asymmetricEncrypt,
+  asymmetricDecrypt,
+  encryptMessage,
+  decryptMessage,
+};
