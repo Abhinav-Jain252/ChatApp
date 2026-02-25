@@ -1,1 +1,1 @@
-This project is a command-line interface (CLI) application developed to demonstrate the implementation of End-to-End Encryption (E2EE) through a manual cryptographic handshake. The system establishes a secure communication channel between two peers without relying on high-level automated protocols like TLS, instead utilizing individual OpenSSL functions and the Node.js crypto module.
+
