@@ -56,6 +56,11 @@ function startServer() {
 
         // 3. Receive encrypted messages
         else if (packet.type === "MSG") {
+          console.log("\n[TRAFFIC] Encrypted Message Received:");
+          console.log(`IV: ${packet.data.iv}`);
+          console.log(`CipherText: ${packet.data.cipherText}`);
+          console.log(`Auth Tag: ${packet.data.authTag}`);
+
           const decrypted = decryptMessage(packet.data, sessionKey);
           console.log(`\nPeer: ${decrypted}`);
           process.stdout.write("You: ");
@@ -109,6 +114,11 @@ function startClient() {
 
       // Receive encrypted message
       else if (packet.type === "MSG") {
+         console.log("\n[TRAFFIC] Encrypted Message Received:");
+          console.log(`IV: ${packet.data.iv}`);
+          console.log(`CipherText: ${packet.data.cipherText}`);
+          console.log(`Auth Tag: ${packet.data.authTag}`);
+
         const decrypted = decryptMessage(packet.data, sessionKey);
         console.log(`\nPeer: ${decrypted}`);
         process.stdout.write("You: ");
@@ -128,6 +138,7 @@ function setupChat(socket) {
   rl.on("line", (line) => {
     if (sessionKey) {
       const encrypted = encryptMessage(line, sessionKey);
+      console.log(`[SENDING] Encrypted: ${encrypted.cipherText}`)
       socket.write(JSON.stringify({ type: "MSG", data: encrypted }));
     }
     rl.prompt();
