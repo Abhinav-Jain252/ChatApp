@@ -71,61 +71,67 @@ function startServer() {
     });
   });
 
-  server.listen(PORT, () => console.log(`Server listening on PORT ${5000}...`));
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`[READY] Server is live on PORT ${PORT}`);
+    console.log(`[INFO] Others can connect using your IP address.`);
+  });
 }
 
 // Client Side (User A)
 function startClient() {
-  const socket = net.createConnection({ port: PORT }, () => {
-    console.log("\n[!] Connected to Server");
-  });
+  rl.question("Enter the Server's IP address: ", (targetIP) => {
+    // We pass targetIP here so it connects to the other machine
+    const socket = net.createConnection({ port: PORT, host: targetIP }, () => {
+      console.log(`\n[!] Connected to Server at ${targetIP}`);
+    });
 
-  socket.on("data", (data) => {
-    try {
-      const packet = JSON.parse(data);
+    socket.on("data", (data) => {
+      try {
+        const packet = JSON.parse(data);
 
-      // 1. Receive Server Certificate
-      if (packet.type === "CERT") {
-        console.log("[!] Verifying Server Certificate...");
+        // 1. Receive Server Certificate
+        if (packet.type === "CERT") {
+          console.log("[!] Verifying Server Certificate...");
 
-        if (verifyCertificate(packet.data, ROOT_CA)) {
-          console.log("[SUCCESS] Server identity verified via Root CA");
+          if (verifyCertificate(packet.data, ROOT_CA)) {
+            console.log("[SUCCESS] Server identity verified via Root CA");
 
-          // 2. Generate Session Key
-          sessionKey = require("crypto").randomBytes(32);
+            // 2. Generate Session Key
+            sessionKey = require("crypto").randomBytes(32);
 
-          // 3. Encrypt session key with server's public key
-          const serverPubKey = getPublicKeyFromCert(packet.data);
-          const encryptedKey = asymmetricEncrypt(serverPubKey, sessionKey);
+            // 3. Encrypt session key with server's public key
+            const serverPubKey = getPublicKeyFromCert(packet.data);
+            const encryptedKey = asymmetricEncrypt(serverPubKey, sessionKey);
 
-          socket.write(
-            JSON.stringify({
-              type: "SESSION_KEY",
-              data: encryptedKey.toString("base64"),
-            }),
-          );
+            socket.write(
+              JSON.stringify({
+                type: "SESSION_KEY",
+                data: encryptedKey.toString("base64"),
+              }),
+            );
 
-          setupChat(socket);
-        } else {
-          console.log("[FAILURE] Invalid Certification. Closing Connection");
-          socket.destroy();
+            setupChat(socket);
+          } else {
+            console.log("[FAILURE] Invalid Certification. Closing Connection");
+            socket.destroy();
+          }
         }
-      }
 
-      // Receive encrypted message
-      else if (packet.type === "MSG") {
-         console.log("\n[TRAFFIC] Encrypted Message Received:");
+        // Receive encrypted message
+        else if (packet.type === "MSG") {
+          console.log("\n[TRAFFIC] Encrypted Message Received:");
           console.log(`IV: ${packet.data.iv}`);
           console.log(`CipherText: ${packet.data.cipherText}`);
           console.log(`Auth Tag: ${packet.data.authTag}`);
 
-        const decrypted = decryptMessage(packet.data, sessionKey);
-        console.log(`\nPeer: ${decrypted}`);
-        process.stdout.write("You: ");
+          const decrypted = decryptMessage(packet.data, sessionKey);
+          console.log(`\nPeer: ${decrypted}`);
+          process.stdout.write("You: ");
+        }
+      } catch (err) {
+        console.error("[ERROR]", err.message);
       }
-    } catch (err) {
-      console.error("[ERROR]", err.message);
-    }
+    });
   });
 }
 
@@ -138,7 +144,7 @@ function setupChat(socket) {
   rl.on("line", (line) => {
     if (sessionKey) {
       const encrypted = encryptMessage(line, sessionKey);
-      console.log(`[SENDING] Encrypted: ${encrypted.cipherText}`)
+      console.log(`[SENDING] Encrypted: ${encrypted.cipherText}`);
       socket.write(JSON.stringify({ type: "MSG", data: encrypted }));
     }
     rl.prompt();
